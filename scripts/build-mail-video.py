@@ -14,7 +14,7 @@ const newsVideoBridgeFactory=(()=>{BRIDGE;return createVideoMailBridge;})();
 const selectedEpisodeFiles=["1jOaK1Qf9iwTx2xf0qb0QUsEJpZNNu0RL", "1Uca0MYjykTL5ozeSy9HqkSaTKgp8M1bD", "18odiR4or56Kg6H3bS4FjwLOvj4nMFjq5", "1CqkkKAtiMaVNSKxwJff0FBh-pHB-sqFJ"];
 const selectedFolder=id=>selectedEpisodeFiles.includes(id)?'1kSl08R_HZAPAmYNQ8Xp6avw0omgwElPr':'1mq-Xv3ej0UFNbMkF6R4Hk_d1jG4FKWzW';
 const newsDriveBlur=createDriveBlurMaintenance({
- verify:(token,env,audience)=>newsVideoAuth(token,{COLLECTOR_REPO:'SHMUEL-LAMED/07',COLLECTOR_REPO_ID:'1390638770'},audience),
+ verify:(token,env,audience)=>newsVideoAuth(token,{COLLECTOR_REPO:'SHMUEL-LAMED/election-news',COLLECTOR_REPO_ID:'1457981746'},audience),
  read:async(env,id)=>{
   const headers={Authorization:'Bearer '+await accessToken(env)};
   const meta=await fetch('https://www.googleapis.com/drive/v3/files/'+id+'?fields=id,mimeType,size,parents,version',{headers});
@@ -57,7 +57,7 @@ const newsVideoMail=newsVideoBridgeFactory({
   }
   throw Error(last);
  },
- verify:(token,env,audience)=>newsVideoAuth(token,{COLLECTOR_REPO:'SHMUEL-LAMED/07',COLLECTOR_REPO_ID:'1390638770'},audience),
+ verify:(token,env,audience)=>newsVideoAuth(token,{COLLECTOR_REPO:'SHMUEL-LAMED/election-news',COLLECTOR_REPO_ID:'1457981746'},audience),
  google:(env,url,options)=>gapi(env,url,options),
  storeVideo:async(env,{name,bytes,day})=>{
   if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(day))throw Error('invalid_video_day');
