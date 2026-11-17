@@ -42,6 +42,9 @@ MODELS = {
 # Scores are log-odds that a look shows a male: 0 is undecided, positive is male, negative is female.
 CLEAR_SCORE = 2.2        # average a track needs before its person may stay visible
 CLEAR_SINGLE = 3.2       # a person seen in one sample only needs much stronger evidence
+# A person whose face was never read (back turned, far away, covered) is judged by the body alone, and the
+# body is the weaker witness: on held-out pedestrians about 3 women in 100 pass 2.2, about 3 in 1000 pass 3.8.
+CLEAR_FACELESS = 3.8
 FEMALE_LOOK = -0.5       # a look this low counts as evidence of a woman
 MAX_FEMALE_SHARE = 0.12  # more than this share of such looks blurs the whole track
 SCORE_CAP = 6.0          # one extreme look cannot outvote several ordinary ones
@@ -91,14 +94,20 @@ def link_tracks(frames):
     return [t['items'] for t in tracks]
 
 
-def track_is_clearly_male(scores):
-    """scores: one entry per look, None when the figure could not be judged."""
+def track_is_clearly_male(scores, faceless=None):
+    """scores: one entry per look, None when the figure could not be judged.
+
+    faceless: per look, True when only the body was read. A track with no face reading at all needs
+    the stricter CLEAR_FACELESS average, from at least two looks.
+    """
     judged = [max(-SCORE_CAP, min(SCORE_CAP, s)) for s in scores if s is not None]
     if not judged or len(judged) * 2 < len(scores):
         return False
     if sum(1 for s in judged if s <= FEMALE_LOOK) > MAX_FEMALE_SHARE * len(judged):
         return False
     average = sum(judged) / len(judged)
+    if faceless is not None and all(flag for flag, s in zip(faceless, scores) if s is not None):
+        return len(judged) >= 2 and average >= CLEAR_FACELESS
     return average >= (CLEAR_SINGLE if len(judged) < 2 else CLEAR_SCORE)
 
 
@@ -106,7 +115,8 @@ def decide(frames):
     """Returns, per frame, the pixel boxes that must be blurred."""
     result = [[] for _ in frames]
     for track in link_tracks(frames):
-        if track_is_clearly_male([frames[f]['people'][p]['score'] for f, p in track]):
+        looks = [frames[f]['people'][p] for f, p in track]
+        if track_is_clearly_male([look['score'] for look in looks], [look.get('faceless', False) for look in looks]):
             continue
         for f, p in track:
             result[f].append(frames[f]['people'][p]['box'])
@@ -310,6 +320,7 @@ class LocalAnalyzer:
             scores.setdefault(i, {})[kind] = score
         for i, found in scores.items():
             body, head = found.get('body'), found.get('head')
+            people[i]['faceless'] = head is None
             if head is None:
                 people[i]['score'] = body
             elif min(body, head) <= FEMALE_LOOK:
@@ -317,7 +328,7 @@ class LocalAnalyzer:
                 people[i]['score'] = min(body, head)
             else:
                 people[i]['score'] = (body + head) / 2
-        return [{'box': p['box'], 'score': p['score']} for p in people]
+        return [{'box': p['box'], 'score': p['score'], 'faceless': p.get('faceless', True)} for p in people]
 
     # -- interface used by women_blur.sanitize_video --
     def analyze_samples(self, samples, deadline=None):
