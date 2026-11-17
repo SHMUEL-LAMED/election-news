@@ -27,6 +27,20 @@ class LocalBlurDecisionTests(unittest.TestCase):
         self.assertTrue(sum(scores) / len(scores) > b.CLEAR_SCORE)
         self.assertEqual(b.decide(frames), [[box]] * len(scores))
 
+    def test_a_person_whose_face_was_never_read_needs_stronger_and_repeated_evidence(self):
+        box = (10, 10, 60, 160)
+        def track(scores, faceless):
+            return b.decide([{'scene': 0, 'people': [{'box': box, 'score': s, 'faceless': f}]} for s, f in zip(scores, faceless)])
+        # The same body scores clear a person once a face was read, and blur one seen only from behind.
+        self.assertEqual(track([3.0] * 5, [False] * 5), [[]] * 5)
+        self.assertEqual(track([3.0] * 5, [True] * 5), [[box]] * 5)
+        self.assertEqual(track([3.0] * 5, [True, True, False, True, True]), [[]] * 5)
+        # Body alone: only a strong average over more than one look.
+        self.assertEqual(track([4.5] * 3, [True] * 3), [[]] * 3)
+        self.assertEqual(track([5.5], [True]), [[box]])
+        # An unjudged look carries no face information either way.
+        self.assertEqual(track([3.0, None, 3.0], [True, False, True]), [[box]] * 3)
+
     def test_one_extreme_look_cannot_clear_a_track(self):
         box = (10, 10, 60, 160)
         frames = [{'scene': 0, 'people': [person(box, s)]} for s in (40, 0.5, 0.5, 0.5)]
