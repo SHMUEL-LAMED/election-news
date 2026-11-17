@@ -56,6 +56,27 @@ def cached_analyzer(endpoint):
     return analyze
 
 
+LOCAL_ANALYZER = None
+
+
+def local_engine():
+    # The free on-runner analyzer is the default; BLUR_ENGINE=remote restores the paid frame service.
+    return os.environ.get('BLUR_ENGINE', 'local') != 'remote'
+
+
+def frame_analyzer(endpoint):
+    """The free on-runner analyzer when BLUR_ENGINE=local, otherwise the remote service."""
+    global LOCAL_ANALYZER
+    if not local_engine():
+        return cached_analyzer(endpoint)
+    if LOCAL_ANALYZER is None:
+        from local_blur import LocalAnalyzer
+        started = time.monotonic()
+        LOCAL_ANALYZER = LocalAnalyzer()
+        print('local_blur_ready', round(time.monotonic() - started), flush=True)
+    return LOCAL_ANALYZER
+
+
 def retry_processing(operation, attempts=3, total_seconds=1500):
     deadline = time.monotonic() + total_seconds
     for attempt in range(1, attempts + 1):
@@ -140,7 +161,7 @@ def make_video(url, destination, deadline=None):
             raise ValueError('untrusted_publisher')
         downloaded = destination.with_suffix('.input.mp4')
         filters = '!is_live & !is_upcoming' + (' & channel_id = ' + channel if channel else '')
-        subprocess.run([os.sys.executable, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '20', '--js-runtimes', 'node', '--match-filter', filters, '-f', 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]', '--merge-output-format', 'mp4', '-o', str(downloaded), url], check=True, capture_output=True, timeout=budget(300))
+        subprocess.run([os.sys.executable, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '20', '--js-runtimes', 'node', '--match-filter', filters, '-f', ('worstvideo[ext=mp4][height>=360]+bestaudio[ext=m4a]/' if local_engine() else '') + 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]', '--merge-output-format', 'mp4', '-o', str(downloaded), url], check=True, capture_output=True, timeout=budget(300))
         inputs, maps = ['-i', str(downloaded)], ['-map', '0:v:0', '-map', '0:a:0']
     else:
         video, audio = video_inputs(url)
@@ -148,20 +169,29 @@ def make_video(url, destination, deadline=None):
         if audio:
             inputs += ['-user_agent', c.UA, '-protocol_whitelist', 'http,https,tcp,tls', '-i', audio]
         maps = ['-map', '0:v:0', '-map', '1:a:0' if audio else '0:a:0']
+    blur = os.environ.get('BLUR_WOMEN') == '1'
+    # The local analyzer judges a sharper copy of the same frames; only the small file is delivered.
+    detail = destination.with_suffix('.detail.mp4') if blur and local_engine() else None
     try:
         subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', *inputs, *maps,
                         '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,setsar=1',
                         '-r', '20', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '128k', '-maxrate', '144k', '-bufsize', '288k', '-g', '40',
-                        '-c:a', 'aac', '-b:a', '32k', '-ac', '2', '-ar', '44100', '-movflags', '+faststart', '-y', str(destination)], check=True, capture_output=True, timeout=budget(600))
+                        '-c:a', 'aac', '-b:a', '32k', '-ac', '2', '-ar', '44100', '-movflags', '+faststart', '-y', str(destination),
+                        *(['-map', '0:v:0', '-an',
+                           '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1',
+                           '-r', '20', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-y', str(detail)] if detail else [])],
+                       check=True, capture_output=True, timeout=budget(600))
         duration = probe(destination)
-        if os.environ.get('BLUR_WOMEN') == '1':
-            if not BLUR_ENDPOINT:
+        if blur:
+            if not BLUR_ENDPOINT and not local_engine():
                 raise ValueError('blur_service_missing')
             from women_blur import sanitize_video
             filtered = destination.with_suffix('.filtered.mp4')
-            analyze = cached_analyzer(BLUR_ENDPOINT)
+            analyze = frame_analyzer(BLUR_ENDPOINT)
             def process(remaining):
-                sanitize_video(destination, filtered, analyze, deadline_seconds=remaining)
+                sanitize_video(destination, filtered, analyze, deadline_seconds=remaining, analysis_source=detail)
+                if hasattr(analyze, 'stats'):
+                    print('local_blur_totals', json.dumps(analyze.stats), flush=True)
                 if abs(probe(filtered)-duration) > .3:
                     raise ValueError('blur_duration_mismatch')
                 filtered.replace(destination)
@@ -170,6 +200,8 @@ def make_video(url, destination, deadline=None):
     finally:
         if downloaded:
             downloaded.unlink(missing_ok=True)
+        if detail:
+            detail.unlink(missing_ok=True)
 
 
 def split_digest(clips, folder):
@@ -235,7 +267,7 @@ def postprocess_archive(mail, budget=480):
                 if hashlib.sha256(source.read_bytes()).hexdigest() != item['rawHash']:
                     raise ValueError('archive_source_changed')
                 duration = probe(source)
-                analyze = cached_analyzer(mail)
+                analyze = frame_analyzer(mail)
                 retry_processing(lambda seconds: sanitize_video(source, output, analyze, deadline_seconds=seconds), total_seconds=min(remaining, 240))
                 if abs(probe(output) - duration) > .3 or not 0 < output.stat().st_size <= LIMIT:
                     raise ValueError('post_blur_output_invalid')
@@ -272,8 +304,7 @@ def main():
         with tempfile.TemporaryDirectory() as tmp:
             source, output = Path(tmp)/'test.mp4', Path(tmp)/'test-filtered.mp4'
             subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=blue:s=160x96:r=20:d=1','-f','lavfi','-i','sine=frequency=440:duration=1','-c:v','libx264','-c:a','aac','-shortest',str(source)],check=True)
-            def analyze(frames):
-                return analyze_frames(mail, frames)
+            analyze = frame_analyzer(mail) if local_engine() else (lambda frames: analyze_frames(mail, frames))
             result=retry_processing(lambda remaining: sanitize_video(source, output, analyze, deadline_seconds=remaining))
             if abs(probe(output)-probe(source))>.3:
                 raise ValueError('blur_duration_mismatch')

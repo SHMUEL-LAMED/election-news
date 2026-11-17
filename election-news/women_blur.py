@@ -35,7 +35,7 @@ def blur_frame(frame, boxes):
     return output
 
 
-def sanitize_video(source, destination, analyze, deadline_seconds=1500):
+def sanitize_video(source, destination, analyze, deadline_seconds=1500, analysis_source=None):
     import cv2
     import numpy as np
     started = time.monotonic()
@@ -46,22 +46,34 @@ def sanitize_video(source, destination, analyze, deadline_seconds=1500):
     width, height = int(cap.get(3)), int(cap.get(4))
     stride = max(1, round(fps/4))
     samples, scene, previous, frame_count, last = [], 0, None, 0, None
+    # Optional sharper copy of the same clip, frame for frame: the analysis sees more detail than the
+    # small file that is delivered. Boxes are relative, so they fit both. Where it ends early or cannot
+    # be read, the delivered frame itself is analysed.
+    detail = cv2.VideoCapture(str(analysis_source)) if analysis_source else None
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
+            view = frame
+            if detail is not None:
+                detail_ok, sharp = detail.read()
+                if detail_ok:
+                    view = sharp
+                else:
+                    detail.release()
+                    detail = None
             gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (64, 36))
             cut = previous is not None and np.mean(cv2.absdiff(gray, previous)) > 35
             if cut:
                 scene += 1
             previous = gray
             if cut or frame_count % stride == 0:
-                encoded_ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                encoded_ok, jpg = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 if not encoded_ok:
                     raise ValueError('frame_encode_failed')
                 samples.append({'frame': frame_count, 'scene': scene, 'image': base64.b64encode(jpg).decode()})
-            last = frame
+            last = view
             frame_count += 1
             if len(samples) > 3000 or time.monotonic()-started > deadline_seconds:
                 raise ValueError('blur_analysis_budget_exceeded')
@@ -74,7 +86,20 @@ def sanitize_video(source, destination, analyze, deadline_seconds=1500):
             samples.append({'frame': frame_count-1, 'scene': scene, 'image': base64.b64encode(jpg).decode()})
     finally:
         cap.release()
-    for start in range(0, len(samples), 8):
+        if detail is not None:
+            detail.release()
+    if hasattr(analyze, 'analyze_samples'):
+        # A local analyzer follows each person through the whole clip before deciding anything.
+        answers = analyze.analyze_samples(samples, deadline=started + deadline_seconds)
+        if not isinstance(answers, list) or len(answers) != len(samples):
+            raise ValueError('incomplete_blur_analysis')
+        for sample, boxes in zip(samples, answers):
+            if not isinstance(boxes, list) or len(boxes) > 50:
+                raise ValueError('invalid_blur_analysis')
+            padded_boxes(boxes, width, height)
+            sample['boxes'] = boxes
+            del sample['image']
+    for start in range(0, 0 if hasattr(analyze, 'analyze_samples') else len(samples), 8):
         if time.monotonic()-started > deadline_seconds:
             raise ValueError('blur_analysis_budget_exceeded')
         batch = samples[start:start+8]
