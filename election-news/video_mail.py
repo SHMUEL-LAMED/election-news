@@ -263,6 +263,9 @@ def main():
     BLUR_ENDPOINT = mail
     c.ENDPOINT = endpoint
     state = c.worker(mail, '/news-video/state')
+    if state.get('requireWomenBlur'):
+        # The server accepts filtered files only, so every clip is blurred before it is uploaded.
+        os.environ['BLUR_WOMEN'] = '1'
     print('mail_server_ready', flush=True)
     if args.check_blur:
         from women_blur import sanitize_video
