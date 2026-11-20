@@ -101,7 +101,7 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main' && !inputs.blur_existing && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[blur-now]')) && (github.event.schedule == '2,12,22,32,42,52 * * * *' || github.event.schedule == '7 * * * *' || inputs.video_email || inputs.video_mail_check_only || inputs.blur_check_only || inputs.repair_archive || (github.event_name == 'push' && contains(github.event.head_commit.message, '[video-now]')) || inputs.eretz_latest || (github.event_name == 'push' && contains(github.event.head_commit.message, '[eretz-now]')))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -182,7 +182,7 @@ jobs:
   blur-existing:
     needs: deploy-drive-blur
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
