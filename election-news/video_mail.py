@@ -161,7 +161,7 @@ def make_video(url, destination, deadline=None):
             raise ValueError('untrusted_publisher')
         downloaded = destination.with_suffix('.input.mp4')
         filters = '!is_live & !is_upcoming' + (' & channel_id = ' + channel if channel else '')
-        subprocess.run([os.sys.executable, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '20', '--js-runtimes', 'node', '--match-filter', filters, '-f', ('worstvideo[ext=mp4][height>=360]+bestaudio[ext=m4a]/' if local_engine() else '') + 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]', '--merge-output-format', 'mp4', '-o', str(downloaded), url], check=True, capture_output=True, timeout=budget(300))
+        subprocess.run([os.sys.executable, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '20', '--js-runtimes', 'node', '--match-filter', filters, '-f', ('worstvideo[ext=mp4][height>=360]+bestaudio[ext=m4a]/' if local_engine() else '') + 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]', '--merge-output-format', 'mp4', '-o', str(downloaded), url], check=True, capture_output=True, timeout=budget(900))
         inputs, maps = ['-i', str(downloaded)], ['-map', '0:v:0', '-map', '0:a:0']
     else:
         video, audio = video_inputs(url)
@@ -180,7 +180,7 @@ def make_video(url, destination, deadline=None):
                         *(['-map', '0:v:0', '-an',
                            '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1',
                            '-r', '20', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-y', str(detail)] if detail else [])],
-                       check=True, capture_output=True, timeout=budget(600))
+                       check=True, capture_output=True, timeout=budget(1200))
         duration = probe(destination)
         if blur:
             if not BLUR_ENDPOINT and not local_engine():
@@ -195,7 +195,7 @@ def make_video(url, destination, deadline=None):
                 if abs(probe(filtered)-duration) > .3:
                     raise ValueError('blur_duration_mismatch')
                 filtered.replace(destination)
-            retry_processing(process, total_seconds=budget(1500))
+            retry_processing(process, total_seconds=budget(2700))
         return duration
     finally:
         if downloaded:
@@ -246,7 +246,7 @@ def eligible(date, state, now=None):
     return value >= cutoff
 
 
-def postprocess_archive(mail, budget=480):
+def postprocess_archive(mail, budget=900):
     """Originals are already durable; failures leave the queue for a later run."""
     from women_blur import sanitize_video
     started = time.monotonic()
@@ -268,7 +268,7 @@ def postprocess_archive(mail, budget=480):
                     raise ValueError('archive_source_changed')
                 duration = probe(source)
                 analyze = frame_analyzer(mail)
-                retry_processing(lambda seconds: sanitize_video(source, output, analyze, deadline_seconds=seconds), total_seconds=min(remaining, 240))
+                retry_processing(lambda seconds: sanitize_video(source, output, analyze, deadline_seconds=seconds), total_seconds=min(remaining, 900))
                 if abs(probe(output) - duration) > .3 or not 0 < output.stat().st_size <= LIMIT:
                     raise ValueError('post_blur_output_invalid')
                 result = c.worker(mail, route, output.read_bytes(), {'Content-Type': 'video/mp4', 'X-News-Filter': 'women-body-v1', 'X-Original-SHA256': item['rawHash']})
@@ -347,7 +347,7 @@ def main():
         # Resolve metadata first. Downloads run in original chronological order.
         resolved = []
         for url in c.fair_candidates(candidates):
-            if time.monotonic() - start > 1500:
+            if time.monotonic() - start > 1800:
                 break
             if source_failures.get(c.source(url), 0) >= 4:
                 continue
@@ -368,11 +368,11 @@ def main():
                 source_failures[kind] = source_failures.get(kind, 0) + 1
                 print('video_source_failed', c.source(url), c.error_code(error), flush=True)
         for date, key, title, video in sorted(resolved, key=lambda x: (c.publication_time(x[0]), x[1])):
-            if time.monotonic() - start > 2100:
+            if time.monotonic() - start > 5400:
                 break
             try:
                 path = folder / ('clip-%03d.mp4' % len(clips))
-                duration = make_video(video, path, deadline=start + 2400)
+                duration = make_video(video, path, deadline=start + 6000)
                 clips.append(path)
                 items.append({'id': key, 'title': title[:600], 'publishedAt': date})
                 print('video_ready', c.source(key), round(duration), flush=True)
